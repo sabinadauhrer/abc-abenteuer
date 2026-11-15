@@ -240,6 +240,8 @@ section{position:absolute;inset:0;overflow-y:auto;padding-bottom:16px;display:fl
         </div>
       </div>
       <p class="note" id="sTotal"></p>
+      <div class="row"><button class="btn" id="sExport">💾 Aufnahmen speichern</button><button class="btn" id="sImportBtn">📂 Aufnahmen laden</button></div>
+      <input type="file" id="sImport" accept=".json,application/json" hidden>
       <p class="note">Tippe auf ●, sprich den Satz, tippe auf ■. Danach hörst du die Aufnahme. Gefällt sie dir nicht, nimm einfach nochmal auf. Wo noch keine Aufnahme ist, spricht die Computerstimme. Die Aufnahmen bleiben nur auf diesem Gerät.</p>
     </section>
   </main>
@@ -564,6 +566,20 @@ $('sDel').onclick=async()=>{const k=sList()[sIdx];try{await idb.del(k)}catch(e){
 $('sPrev').onclick=()=>{sIdx=(sIdx-1+sList().length)%sList().length;renderStimme()};
 $('sNext').onclick=()=>{const L=sList();let j=sIdx+1;while(j<L.length&&recorded.has(L[j]))j++;sIdx=j<L.length?j:(sIdx+1)%L.length;renderStimme()};
 document.querySelectorAll('#sCat button').forEach(b=>b.onclick=()=>{sCat=b.dataset.c;sIdx=0;renderStimme()});
+
+// Sichern und Laden der Aufnahmen
+function abToB64(ab){const u=new Uint8Array(ab);let s='';for(let i=0;i<u.length;i+=0x8000)s+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));return btoa(s)}
+$('sExport').onclick=async()=>{
+  try{const ks=await idb.keys();if(!ks||!ks.length){showErr('Es gibt noch keine Aufnahmen.');return}
+    const out={app:'abc-abenteuer',version:1,items:{}};for(const k of ks){const r=await idb.get(k);if(r)out.items[k]={type:r.type,data:abToB64(r.data)}}
+    const url=URL.createObjectURL(new Blob([JSON.stringify(out)],{type:'application/json'}));
+    const a=document.createElement('a');a.href=url;a.download='abc-stimme.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);
+  }catch(e){showErr('Speichern ging nicht: '+(e.message||e))}};
+$('sImportBtn').onclick=()=>$('sImport').click();
+$('sImport').onchange=async e=>{const file=e.target.files[0];e.target.value='';if(!file)return;
+  try{const j=JSON.parse(await file.text());let n=0;for(const[k,v]of Object.entries(j.items||{})){const bin=atob(v.data),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);
+      await idb.put(k,{type:v.type,data:u.buffer});recorded.add(k);ownBufs.delete(k);n++}
+    renderStimme();showErr(n+' Aufnahmen geladen ✓')}catch(err){showErr('Datei konnte nicht geladen werden.')}};
 
 // ---------- Start ----------
 // ---------- Puzzle nach je 5 Wörtern ----------
