@@ -152,6 +152,21 @@ section{position:absolute;inset:0;overflow-y:auto;padding-bottom:16px;display:fl
 .piece{border-radius:10px;background-repeat:no-repeat;box-shadow:0 3px 0 rgb(29 43 83 / .25);transition:transform .15s,border-radius .4s}
 .piece.sel{transform:scale(.9);outline:4px solid var(--syl-a);outline-offset:-4px}
 .board.done .piece{border-radius:0;box-shadow:none}
+/* Eigene Stimme */
+.parent{grid-column:1/-1;height:52px;border-radius:26px;background:transparent;border:2px dashed var(--line);color:var(--muted);font-weight:600;font-size:17px}
+.segw{display:flex;background:var(--paper);border-radius:22px;padding:4px;box-shadow:0 2px 0 var(--line)}
+.segw button{flex:1;height:40px;border-radius:18px;font-weight:600;font-size:16px}
+.segw button[aria-pressed="true"]{background:var(--ink);color:#fff}
+.reccard{background:var(--paper);border-radius:26px;padding:20px 16px;display:flex;flex-direction:column;align-items:center;gap:12px;box-shadow:0 4px 0 var(--line);text-align:center}
+.reccount{font-size:15px;color:var(--muted);font-variant-numeric:tabular-nums}
+.rectext{font-family:var(--font-letter);font-size:clamp(30px,9vw,46px);line-height:1.2;text-wrap:balance}
+.recstate{font-size:15px;font-weight:600;padding:4px 12px;border-radius:12px;background:var(--sky);color:var(--muted)}
+.recstate.own{background:#DDF3E8;color:var(--good)}
+.recbtn{width:118px;height:118px;border-radius:50%;background:var(--bad);color:#fff;font-size:18px;font-weight:700;box-shadow:0 5px 0 #a8331f;display:grid;place-items:center;line-height:1.2}
+.recbtn.on{animation:pulse 1s infinite;background:#B3261E}
+@keyframes pulse{50%{transform:scale(1.06)}}
+.note{font-size:14px;color:var(--muted);margin:0;text-align:center;text-wrap:balance}
+@media (prefers-reduced-motion:reduce){.recbtn.on{animation:none}}
 </style>
 
 <div id="app">
@@ -170,6 +185,7 @@ section{position:absolute;inset:0;overflow-y:auto;padding-bottom:16px;display:fl
         <button class="tile" data-go="lesen"><span class="art">👀</span><b>Lesen</b><small>Wort lesen, Bild finden</small></button>
         <button class="tile" data-go="schreiben"><span class="art">✏️</span><b>Schreiben</b><small>Buchstaben nachspuren</small></button>
         <button class="tile" data-go="bauen"><span class="art">🧩</span><b>Wörter bauen</b><small>Buchstaben legen</small></button>
+        <button class="parent" data-go="stimme">🎤 Für Eltern: eigene Stimme aufnehmen</button>
       </div>
     </section>
 
@@ -207,6 +223,24 @@ section{position:absolute;inset:0;overflow-y:auto;padding-bottom:16px;display:fl
       <div class="row"><button class="hear" id="bHear">🔊 Nochmal hören</button></div>
       <div class="slots" id="bSlots"></div>
       <div class="tiles" id="bTiles"></div>
+    </section>
+    <section id="v-stimme" hidden>
+      <div class="segw" id="sCat"><button data-c="abc">Buchstaben</button><button data-c="wort">Wörter</button><button data-c="lob">Lob</button></div>
+      <div class="reccard">
+        <div class="reccount" id="sCount"></div>
+        <div class="note">Sag bitte:</div>
+        <div class="rectext" id="sText"></div>
+        <div class="recstate" id="sState"></div>
+        <button class="recbtn" id="sRec">● Auf-<br>nehmen</button>
+        <div class="row">
+          <button class="btn" id="sPrev">‹</button>
+          <button class="btn" id="sPlay">▶ Anhören</button>
+          <button class="btn" id="sDel">🗑</button>
+          <button class="btn main" id="sNext">Weiter ›</button>
+        </div>
+      </div>
+      <p class="note" id="sTotal"></p>
+      <p class="note">Tippe auf ●, sprich den Satz, tippe auf ■. Danach hörst du die Aufnahme. Gefällt sie dir nicht, nimm einfach nochmal auf. Wo noch keine Aufnahme ist, spricht die Computerstimme. Die Aufnahmen bleiben nur auf diesem Gerät.</p>
     </section>
   </main>
 </div>
@@ -293,17 +327,35 @@ function b64(b){const s=atob(b),u=new Uint8Array(s.length);for(let i=0;i<s.lengt
 function getBuf(i){if(!bufs.has(i))bufs.set(i,new Promise((res,rej)=>{try{const p=actx.decodeAudioData(b64(TONDATA[i]),res,rej);if(p&&p.catch)p.catch(rej)}catch(e){rej(e)}}));return bufs.get(i)}
 function showErr(e){const m=$('tonErr');if(!m)return;m.textContent='Ton-Problem: '+((e&&(e.name||e.message))||e);m.hidden=false;clearTimeout(showErr.t);showErr.t=setTimeout(()=>m.hidden=true,5000)}
 function playEl(i){return new Promise(r=>{const a=new Audio('data:audio/mp4;base64,'+TONDATA[i]);a.onended=r;a.onerror=()=>{showErr('Audio-Element');r()};const p=a.play();if(p&&p.catch)p.catch(e=>{showErr(e);r()})})}
+// ---------- Eigene Aufnahmen (IndexedDB, nur auf diesem Gerät) ----------
+const recorded=new Set(),ownBufs=new Map();
+const idb={p:null,open(){if(!this.p)this.p=new Promise((res,rej)=>{const r=indexedDB.open('abc-stimme',1);r.onupgradeneeded=()=>r.result.createObjectStore('rec');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});return this.p},
+  async run(mode,fn){const db=await this.open();return new Promise((res,rej)=>{const tx=db.transaction('rec',mode),q=fn(tx.objectStore('rec'));tx.oncomplete=()=>res(q&&q.result);tx.onerror=()=>rej(tx.error)})},
+  get(k){return this.run('readonly',st=>st.get(k))},put(k,v){return this.run('readwrite',st=>st.put(v,k))},del(k){return this.run('readwrite',st=>st.delete(k))},keys(){return this.run('readonly',st=>st.getAllKeys())}};
+try{idb.keys().then(ks=>{(ks||[]).forEach(k=>recorded.add(k));if(current==='stimme')renderStimme()}).catch(()=>{})}catch(e){}
+function trimBuf(buf){const d=buf.getChannelData(0),sr=buf.sampleRate;let peak=0;for(let i=0;i<d.length;i++){const v=Math.abs(d[i]);if(v>peak)peak=v}
+  const th=Math.max(.015,peak*.08);let s0=0,e0=d.length-1;while(s0<e0&&Math.abs(d[s0])<th)s0++;while(e0>s0&&Math.abs(d[e0])<th)e0--;
+  s0=Math.max(0,s0-Math.round(.08*sr));e0=Math.min(d.length,e0+Math.round(.15*sr));const len=Math.max(1,e0-s0);
+  const out=actx.createBuffer(buf.numberOfChannels,len,sr);for(let c=0;c<buf.numberOfChannels;c++)out.getChannelData(c).set(buf.getChannelData(c).subarray(s0,s0+len));
+  // etwas lauter machen, wenn leise aufgenommen
+  const g=peak>0?Math.min(3,.9/peak):1;if(g>1.05)for(let c=0;c<out.numberOfChannels;c++){const x=out.getChannelData(c);for(let i=0;i<x.length;i++)x[i]*=g}
+  return out}
+function getOwn(t){if(!ownBufs.has(t))ownBufs.set(t,idb.get(t).then(r=>new Promise((res,rej)=>{if(!r)return rej(new Error('fehlt'));
+  const p=actx.decodeAudioData(r.data.slice(0),b=>res(trimBuf(b)),rej);if(p&&p.catch)p.catch(rej)})));
+  const p=ownBufs.get(t);p.catch(()=>ownBufs.delete(t));return p}
 async function say(...texts){
   unlock();const my=++tok;if(src){try{src.stop()}catch(e){}}
   for(const t of texts.flat()){
     if(my!==tok)return;const i=TONIDX.get(t);
-    if(i===undefined){ttsSay(t);continue}
     try{
       if(!actx)throw new Error('kein AudioContext');
       if(actx.state!=='running')await actx.resume();
-      const buf=await getBuf(i);if(my!==tok)return;
+      let buf=null;
+      if(recorded.has(t)){try{buf=await getOwn(t)}catch(e){buf=null}}
+      if(!buf){if(i===undefined){ttsSay(t);continue}buf=await getBuf(i)}
+      if(my!==tok)return;
       await new Promise(r=>{src=actx.createBufferSource();src.buffer=buf;src.connect(actx.destination);src.onended=r;src.start(0)});
-    }catch(e){if(my!==tok)return;await playEl(i)}
+    }catch(e){if(my!==tok)return;if(i!==undefined)await playEl(i);else ttsSay(t)}
   }
 }
 let voice=null;
@@ -316,7 +368,7 @@ function addStar(){state.stars++;store.set('stars',state.stars);$('starCount').t
 function shake(el){el.classList.remove('shake');void el.offsetWidth;el.classList.add('shake')}
 
 // ---------- Navigation ----------
-const TITLES={home:'ABC-Abenteuer',abc:'Das ABC',lesen:'Lesen',schreiben:'Schreiben',bauen:'Wörter bauen'};
+const TITLES={home:'ABC-Abenteuer',abc:'Das ABC',lesen:'Lesen',schreiben:'Schreiben',bauen:'Wörter bauen',stimme:'Eigene Stimme'};
 let current='home';
 function go(v){
   current=v;
@@ -325,6 +377,7 @@ function go(v){
   if(v==='lesen')newQuiz();
   if(v==='bauen')newBuild();
   if(v==='schreiben')requestAnimationFrame(layoutTrace);
+  if(v==='stimme')renderStimme();else stopStream();
 }
 document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.dataset.go));
 $('back').onclick=()=>go('home');
@@ -459,6 +512,41 @@ function setCase(lower){tLower=lower;$('tUp').setAttribute('aria-pressed',!lower
 $('tUp').onclick=()=>setCase(false);$('tLow').onclick=()=>setCase(true);
 window.addEventListener('resize',()=>{if(current==='schreiben')layoutTrace()});
 if(document.fonts){document.fonts.load('700 100px Andika').then(()=>{if(current==='schreiben')layoutTrace()}).catch(()=>{})}
+
+// ---------- Eigene Stimme aufnehmen ----------
+const WORDSET=new Set(WORDS.map(w=>w.word)),ABCSET=new Set();ABC.forEach(x=>{ABCSET.add(x[1]);ABCSET.add(letterSpeech(x))});
+const SCAT={abc:TON.filter(t=>ABCSET.has(t)),wort:TON.filter(t=>WORDSET.has(t)&&!ABCSET.has(t)),lob:TON.filter(t=>!ABCSET.has(t)&&!WORDSET.has(t))};
+let sCat='abc',sIdx=0,stream=null,rec=null,chunks=[];
+function sList(){return SCAT[sCat]}
+function renderStimme(){
+  const L=sList();sIdx=Math.max(0,Math.min(sIdx,L.length-1));const t=L[sIdx],own=recorded.has(t);
+  document.querySelectorAll('#sCat button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.c===sCat));
+  $('sText').textContent=t;$('sCount').textContent=(sIdx+1)+' von '+L.length+' · '+L.filter(x=>recorded.has(x)).length+' aufgenommen';
+  $('sState').textContent=own?'✓ Deine Stimme':'Noch Computerstimme';$('sState').className='recstate'+(own?' own':'');
+  $('sDel').hidden=!own;$('sTotal').textContent=TON.filter(x=>recorded.has(x)).length+' von '+TON.length+' Sätzen mit deiner Stimme';
+  const on=rec&&rec.state==='recording';$('sRec').classList.toggle('on',!!on);$('sRec').innerHTML=on?'■ Stopp':'● Auf-<br>nehmen';
+}
+function stopStream(){try{if(rec&&rec.state==='recording')rec.stop()}catch(e){}if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}}
+async function startRec(){
+  unlock();
+  if(!navigator.mediaDevices||!window.MediaRecorder){showErr('Aufnehmen geht hier nicht. Öffne die App über die Webseite in Safari.');return}
+  try{if(!stream)stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}})}
+  catch(e){showErr('Mikrofon nicht erlaubt. Bitte in Safari das Mikrofon erlauben.');return}
+  const mime=['audio/mp4','audio/webm;codecs=opus','audio/webm'].find(m=>MediaRecorder.isTypeSupported&&MediaRecorder.isTypeSupported(m));
+  const key=sList()[sIdx];chunks=[];
+  try{rec=new MediaRecorder(stream,mime?{mimeType:mime}:undefined)}catch(e){rec=new MediaRecorder(stream)}
+  rec.ondataavailable=e=>{if(e.data&&e.data.size)chunks.push(e.data)};
+  rec.onstop=async()=>{try{const blob=new Blob(chunks,{type:rec.mimeType||mime||'audio/mp4'});if(!blob.size)throw new Error('leer');
+      await idb.put(key,{type:blob.type,data:await blob.arrayBuffer()});recorded.add(key);ownBufs.delete(key);renderStimme();say(key)}
+    catch(e){showErr('Speichern ging nicht: '+(e.message||e))}finally{renderStimme()}};
+  rec.start();renderStimme();
+}
+$('sRec').onclick=()=>{if(rec&&rec.state==='recording'){rec.stop();renderStimme()}else startRec()};
+$('sPlay').onclick=()=>say(sList()[sIdx]);
+$('sDel').onclick=async()=>{const k=sList()[sIdx];try{await idb.del(k)}catch(e){}recorded.delete(k);ownBufs.delete(k);renderStimme()};
+$('sPrev').onclick=()=>{sIdx=(sIdx-1+sList().length)%sList().length;renderStimme()};
+$('sNext').onclick=()=>{const L=sList();let j=sIdx+1;while(j<L.length&&recorded.has(L[j]))j++;sIdx=j<L.length?j:(sIdx+1)%L.length;renderStimme()};
+document.querySelectorAll('#sCat button').forEach(b=>b.onclick=()=>{sCat=b.dataset.c;sIdx=0;renderStimme()});
 
 // ---------- Start ----------
 // ---------- Puzzle nach je 5 Wörtern ----------
